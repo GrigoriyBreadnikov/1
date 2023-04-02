@@ -1,0 +1,171 @@
+import datetime
+
+import pyautogui as pg
+import time
+
+#нужно установить dotnet для публикации, dotnet ef для создания индемпотентного скрипта и newman для запуска тестов в командной строке
+
+# задаем текущую дату и время
+now = datetime.datetime.now()
+year = now.year
+month = now.month
+day = now.day
+hour = now.hour
+minute = now.minute
+if month < 10:
+    month = str(0)+str(month)
+if day < 10:
+    day = str(0)+str(day)
+if hour < 10:
+    hour = str(0)+str(hour)
+if minute < 10:
+    minute = str(0) + str(minute)
+date = ('date' + "." + str(year) + "." + str(month) + "." + str(day) + "." + 'time' + "." + str(hour) + "." + str(
+    minute))
+
+# директория, куда билдится проект
+BUILD_DIR = "d:\MyProject\Back"
+
+# директория сбилденного проекта
+BUILD_DIR1 = "d:\MyProject\\"
+
+# директория, где находится проект для сборки
+PROJECTDIR = "c:\Project\ProjectBack\ProjectBack.API"
+
+# ветка, от которой надо сделать билд
+BRANCH = "develop"
+
+# путь на астре для закачки готовой публикации
+ASTRABUILD_DIR = "/home/user/ProjectUpdate/TestProjectUpdate/"
+
+# путь на астре для закачки публикации
+ASTRABUILD_DIR1 = "/home/user/ProjectUpdate/TestProjectUpdate/Back/"
+
+# путь на астре, где находится развернутый проект
+ASTRAPROJECT_DIR = "/var/ProjectBack.WebApi.Demo/"
+
+# название базы данных
+DB_NAME = "test_dev_postman"
+
+# IP-адрес сервака
+ASTRA_IP = "192.168.1.1"
+
+# Пароль сервака (если необходимо входить под паролем и не сделан ssh-keygen, то необходимо расскоментировать строки
+# с 140 по 148, 163-165 )
+# PASSWORD_ASTRA = "P@ssw0rd"
+
+# название службы на астре
+PROJECT_DEMON = "project-demo-{0,1,2,3}"
+
+# расположение скриптов для базы данных на Windows
+
+DB_SCRIPT_DIR1 = "d:\\Work\\Automation\\DB\\UpdateDB\\"
+
+# расположение скриптов для базы на астре
+DB_SCRIPT_DIR = "/tmp/db_script/"
+
+# пути к тестам postman
+TEST_POSTMAN_DIR = "d:\Work\Automation\Postman\Final.Project.json"
+TEST_POSTMAN_ENV_DIR = "d:\Work\Automation\Postman\Environment.json"
+TEST_NEWMAN_RESULT = "d:\Work\Automation\TestResult\\" + date + ".txt"
+
+# вход в командную строку
+pg.hotkey('win', 'r')
+pg.typewrite('cmd')
+pg.press('enter')
+time.sleep(2)
+
+# создание папки для публикации и скрипта, переключение на нужную ветку
+pg.typewrite('mkdir'+" " + BUILD_DIR + " " + '&&' + " " + 'cd' + " " + PROJECTDIR + " " + '&&' + " " + 'git switch' +
+             " " + BRANCH+ " " + '&&' + " " + 'git pull')
+pg.press('enter')
+time.sleep(1)
+
+# билд проекта
+pg.typewrite('dotnet build' + " " + PROJECTDIR)
+pg.press('enter')
+time.sleep(20)
+
+# публикация проекта под Astra
+pg.typewrite('dotnet publish' + " " + PROJECTDIR + " " + '-c:Astra -f:net5.0 -r:linux-x64')
+pg.press('enter')
+time.sleep(20)
+
+# создание идемпотентного скрипта
+pg.typewrite('dotnet ef migrations script --idempotent --project' + " " + PROJECTDIR + " " + '-c ProjectContext '
+                                                                                       '--configuration' + " " +
+             'AstraDebug --output' + " " + BUILD_DIR1+'step2.sql')
+pg.press('enter')
+time.sleep(20)
+
+# подготовка папки с проектом на Windows
+pg.typewrite('xcopy /E' + " " + PROJECTDIR + '\\bin\Astra\\net5.0\linux-x64\publish\*' + " " + BUILD_DIR + " " + '&&'
+             + " " +
+             'del' + " " + BUILD_DIR + '\\appsettings*' + " " + '&&'
+             + " " +
+             'xcopy /E' + " " + DB_SCRIPT_DIR1 + '*' + " " + BUILD_DIR1)
+pg.press('enter')
+time.sleep(5)
+
+
+pg.typewrite(# cоздание папки с проектом на Astra
+             'ssh user@'+ASTRA_IP + " " + " " + 'mkdir' + " " + ASTRABUILD_DIR + " " + ';' + " " +
+             # создание папки с выполняемыми скриптами базы данных на Astra
+             'mkdir' + " " + DB_SCRIPT_DIR + " " + '&&' + " " +
+             # копирование папки с проектом на Astra
+             'scp -r' + " " + BUILD_DIR1 + '* user@'+ASTRA_IP + ':' + ASTRABUILD_DIR + " " + '&&' + " " +
+             # остановка службы бэка на Astra
+             'ssh user@'+ASTRA_IP + " " + " " + 'sudo systemctl stop' + " " + PROJECT_DEMON + " " + ';' + " " +
+             # дать права 777 папке с проектом
+             'sudo chmod -R 777' + " " + ASTRABUILD_DIR+'/*' + " " + ';' + " " +
+             # обновление проекта на Astra
+             'sudo cp -R' + " " + ASTRABUILD_DIR1 + '*' + " " + ASTRAPROJECT_DIR + " " + ';' + " " +
+             # копирование скриптов для базы данных в tmp
+             'sudo cp' + " " + ASTRABUILD_DIR+'*.sql' + " " + DB_SCRIPT_DIR + " " + ';' + " " +
+             # операции с базой данных: step1-создание новой бд с 3 меткой и CCR OFF, step2-накатывание идемпотентного
+             # скрипта, step3-удаление и создание 2 таблиц, которые накатываются с CCR ON
+             'sudo -u postgres psql -f' + " " + DB_SCRIPT_DIR+'/step1.sql' + " " + ';' + " " +
+             'sudo -u postgres psql -d' + " " + DB_NAME + " " + '-f' + " " + DB_SCRIPT_DIR+'/step2.sql' + " " + ';' + " " +
+             'sudo -u postgres psql -d' + " " + DB_NAME + " " + '-f' + " " + DB_SCRIPT_DIR+'/step3.sql' + " " + ';' + " " +
+             # запуск службы бэка на Astra
+             'sudo systemctl start' + " " + PROJECT_DEMON + " " + ';' + " " +
+             # удаление скриптов и папки с проектом на Astra
+             'rm -R' + " " + ASTRABUILD_DIR + " " + ';' + " " +
+             'rm -R' + " " + DB_SCRIPT_DIR + " " + '&&' + " " +
+             'rmdir /s /q' + " " + BUILD_DIR1)
+
+pg.press('enter')
+time.sleep(20)
+# команды ниже нужны, если не сделана ssh-keygen (если не сделан, то необходимо расскоментировать строку 55)
+# pg.typewrite(PASSWORD_ASTRA)
+# pg.press('enter')
+# time.sleep(2)
+# pg.typewrite(PASSWORD_ASTRA)
+# pg.press('enter')
+# time.sleep(15)
+# pg.typewrite(PASSWORD_ASTRA)
+# pg.press('enter')
+# time.sleep(15)
+
+# запуск тестов и вывод результата в лог
+pg.typewrite('newman run' + " " + TEST_POSTMAN_DIR + " " + '-e' + " " + TEST_POSTMAN_ENV_DIR + " " + '>' + " " +
+            TEST_NEWMAN_RESULT)
+pg.press('enter')
+
+
+# # #ожидание прогонки тестов и удаление базы
+time.sleep(360)
+ff = pg.typewrite('ssh user@'+ASTRA_IP + " " + 'sudo -u postgres psql' + " " + '-c' + " " + "'" 'DROP DATABASE' + " "
++ DB_NAME + ";" + "'")
+pg.press('enter')
+time.sleep(2)
+
+# команды ниже нужны, если не сделана ssh-keygen (если не сделан, то необходимо расскоментировать строку 55)
+# pg.typewrite(PASSWORD_ASTRA)
+# pg.press('enter')
+# time.sleep(2)
+pg.typewrite('exit')
+pg.press('enter')
+
+
+
